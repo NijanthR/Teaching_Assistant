@@ -3,23 +3,26 @@ import { Route, Routes } from 'react-router-dom'
 import ActivityPage from './pages/ActivityPage.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import SettingsPage from './pages/SettingsPage.jsx'
+import { ThemeProvider } from './context/ThemeContext.jsx'
 
 function App() {
   return (
-    <main className="fixed inset-0 h-screen w-screen overflow-hidden bg-slate-50 text-slate-900">
-      <DesktopChatPreview />
-    </main>
+    <ThemeProvider>
+      <main className="fixed inset-0 h-screen w-screen overflow-hidden">
+        <DesktopChatPreview />
+      </main>
+    </ThemeProvider>
   )
 }
 
 function DesktopChatPreview() {
   return (
-    <div className="h-screen w-screen overflow-hidden bg-slate-50">
+    <div className="h-screen w-screen overflow-hidden">
       <div className="grid h-full w-full grid-cols-[auto_1fr]">
         <SideNav />
 
-        <div className="flex h-full min-h-0 flex-col overflow-hidden bg-slate-50">
-          <div className="flex min-h-0 flex-1 overflow-hidden bg-slate-50">
+        <div className="flex h-full min-h-0 flex-col overflow-hidden">
+          <div className="flex min-h-0 flex-1 overflow-hidden">
             <Routes>
               <Route path="/" element={<DashboardPage />} />
               <Route path="/activity" element={<ActivityPage />} />

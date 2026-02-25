@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import { FiActivity, FiChevronRight, FiHome, FiSettings } from 'react-icons/fi'
+import { useTheme } from '../context/ThemeContext.jsx'
 
 const navItems = [
   { label: 'Dashboard', icon: 'dashboard', to: '/' },
@@ -11,26 +12,27 @@ const synexisLogoUrl = '/path/to/synexis-logo.png'
 
 function SideNav() {
   const [isCollapsed, setIsCollapsed] = useState(true)
+  const { t } = useTheme()
 
   return (
     <aside
-      className={`flex h-full flex-col border-r border-teal-200 bg-linear-to-b from-white via-teal-50 to-teal-100 px-3 pb-5 pt-6 text-teal-900 transition-[width] duration-300 ease-out ${
-        isCollapsed ? 'w-20' : 'w-64'
+      className={`flex h-full flex-col overflow-hidden border-r px-3 pb-5 pt-6 transition-[width] duration-300 ease-out ${t.sidebarBg} ${t.sidebarBorder} ${t.sidebarText} ${
+        isCollapsed ? 'w-24' : 'w-72'
       }`}
     >
       <div className="flex items-center justify-between px-1">
         <div className="flex items-center gap-3">
-          <div className="grid h-10 w-10 place-items-center rounded-xl bg-teal-100 text-teal-700">
+          <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl ${t.sidebarIconBg} ${t.sidebarIconText}`}>
             <img
               src={synexisLogoUrl}
               alt="Synexis logo"
               className="h-10 w-10 rounded-xl object-cover"
             />
           </div>
-          {!isCollapsed && <span className="text-lg font-semibold tracking-wide">Synexis</span>}
+          <span className={`overflow-hidden whitespace-nowrap text-lg font-semibold tracking-wide transition-[opacity,max-width] duration-300 ease-out ${isCollapsed ? 'max-w-0 opacity-0' : 'max-w-xs opacity-100'}`}>Synexis</span>
         </div>
         <button
-          className="grid h-9 w-9 place-items-center rounded-lg text-teal-600 transition hover:bg-teal-100 hover:text-teal-800"
+          className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg transition ${t.sidebarChevron}`}
           onClick={() => setIsCollapsed((prev) => !prev)}
           aria-expanded={!isCollapsed}
           aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
@@ -39,7 +41,7 @@ function SideNav() {
         </button>
       </div>
 
-      <div className="mt-6 h-px w-full bg-linear-to-r from-transparent via-teal-200 to-transparent" />
+      <div className={`mt-6 h-px w-full bg-linear-to-r from-transparent ${t.sidebarDivider} to-transparent`} />
 
       <nav className="mt-6 space-y-2 text-sm">
         {navItems.map((item) => (
@@ -48,37 +50,29 @@ function SideNav() {
       </nav>
 
       <div className="mt-auto">
-        <div className="mt-6 h-px w-full bg-linear-to-r from-transparent via-teal-200 to-transparent" />
+        <div className={`mt-6 h-px w-full bg-linear-to-r from-transparent ${t.sidebarDivider} to-transparent`} />
 
         <NavLink
           to="/settings"
           className={({ isActive }) =>
             `mt-4 flex w-full items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
-              isActive
-                ? 'bg-teal-100 text-teal-900 shadow-[0_0_0_1px_rgba(20,184,166,0.35)]'
-                : 'text-teal-700 hover:bg-teal-100 hover:text-teal-800'
-            } ${isCollapsed ? 'justify-center' : 'justify-start'}`
+              isActive ? t.sidebarActive : t.sidebarSettingsHover
+            }`
           }
           title={isCollapsed ? 'Settings' : undefined}
         >
-          <span className="grid h-9 w-9 place-items-center rounded-lg bg-teal-100 text-teal-700">
+          <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${t.sidebarIconBg} ${t.sidebarIconText}`}>
             <FiSettings className="h-5 w-5" />
           </span>
-          {!isCollapsed && 'Settings'}
+          <span className={`overflow-hidden whitespace-nowrap transition-[opacity,max-width] duration-300 ease-out ${isCollapsed ? 'max-w-0 opacity-0' : 'max-w-xs opacity-100'}`}>Settings</span>
         </NavLink>
 
-        <div
-          className={`mt-4 flex items-center gap-3 rounded-xl bg-teal-50 px-3 py-3 ${
-            isCollapsed ? 'justify-center' : 'justify-start'
-          }`}
-        >
-          <div className="h-10 w-10 rounded-full bg-radial-[at_top] from-white via-teal-300 to-teal-500" />
-          {!isCollapsed && (
-            <div className="text-xs">
-              <p className="text-sm font-semibold text-teal-900">Nijanth R</p>
-              <p className="text-[11px] text-teal-600">njanth.al23@bitsathy.ac.in</p>
-            </div>
-          )}
+        <div className={`mt-4 flex items-center gap-3 rounded-xl px-3 py-3 ${t.sidebarUserCard}`}>
+          <div className="h-10 w-10 shrink-0 rounded-full bg-radial-[at_top] from-white via-teal-300 to-teal-500" />
+          <div className={`overflow-hidden whitespace-nowrap transition-[opacity,max-width] duration-300 ease-out ${isCollapsed ? 'max-w-0 opacity-0' : 'max-w-xs opacity-100'}`}>
+            <p className={`text-sm font-semibold ${t.sidebarUserName}`}>Nijanth R</p>
+            <p className={`text-[11px] ${t.sidebarUserEmail}`}>njanth.al23@bitsathy.ac.in</p>
+          </div>
         </div>
       </div>
     </aside>
@@ -87,25 +81,26 @@ function SideNav() {
 
 function SidebarItem({ label, icon, to, collapsed = false }) {
   const hasIcon = Boolean(icon)
+  const { t } = useTheme()
 
   return (
     <NavLink
       to={to}
       className={({ isActive }) =>
         `flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition ${
-          isActive
-            ? 'bg-teal-100 text-teal-900 shadow-[0_0_0_1px_rgba(20,184,166,0.35)]'
-            : 'text-teal-700 hover:bg-teal-50 hover:text-teal-900'
-        } ${collapsed ? 'justify-center' : 'justify-start'}`
+          isActive ? t.sidebarActive : t.sidebarHover
+        }`
       }
       title={collapsed ? label : undefined}
     >
       {hasIcon && (
-        <span className="grid h-9 w-9 place-items-center rounded-lg bg-teal-100 text-teal-700">
+        <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${t.sidebarIconBg} ${t.sidebarIconText}`}>
           <NavIcon type={icon} />
         </span>
       )}
-      {(!collapsed || !hasIcon) && <span className="text-sm font-medium">{label}</span>}
+      <span className={`overflow-hidden whitespace-nowrap text-sm font-medium transition-[opacity,max-width] duration-300 ease-out ${collapsed ? 'max-w-0 opacity-0' : 'max-w-xs opacity-100'}`}>
+        {label}
+      </span>
     </NavLink>
   )
 }
