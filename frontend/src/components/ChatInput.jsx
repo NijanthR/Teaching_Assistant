@@ -9,12 +9,8 @@ function formatDuration(seconds) {
 }
 
 const MODELS = [
-  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', badge: 'Google' },
-  { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash', badge: 'Google' },
-  { id: 'gpt-5', label: 'GPT-5', badge: 'OpenAI' },
-  { id: 'gpt-4o', label: 'GPT-4o', badge: 'OpenAI' },
-  { id: 'claude-4', label: 'Claude 4 Sonnet', badge: 'Anthropic' },
-  { id: 'claude-3.5', label: 'Claude 3.5 Haiku', badge: 'Anthropic' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', badge: 'Google' },
+  { id: 'hf-llama3-8b', label: 'Llama 3 8B Instruct', badge: 'Hugging Face' },
 ]
 
 function ChatInput({
@@ -26,6 +22,8 @@ function ChatInput({
   value = '',
   onChange,
   onSubmit,
+  selectedModelId,
+  onModelChange,
   audioFile,
   onAudioRecorded,
   onRemoveAudio,
@@ -47,7 +45,7 @@ function ChatInput({
   }
   const { t } = useTheme()
   const buttonClass = buttonClassName || t.inputBtn
-  const [selectedModel, setSelectedModel] = useState(MODELS[0])
+  const selectedModel = MODELS.find((model) => model.id === selectedModelId) || MODELS[0]
   const [open, setOpen] = useState(false)
   const dropdownRef = useRef(null)
 
@@ -77,7 +75,12 @@ function ChatInput({
       chunksRef.current = []
       setRecordingSeconds(0)
 
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg'
+      const mimeType =
+        MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : 'audio/ogg;codecs=opus'
       const recorder = new MediaRecorder(stream, { mimeType })
 
       recorder.ondataavailable = (e) => {
@@ -88,7 +91,7 @@ function ChatInput({
         stream.getTracks().forEach((track) => track.stop())
         const blob = new Blob(chunksRef.current, { type: mimeType })
         const url = URL.createObjectURL(blob)
-        onAudioRecorded?.({ blob, url, duration: recordingSecondsRef.current })
+        onAudioRecorded?.({ blob, url, mimeType, duration: recordingSecondsRef.current })
         setIsRecording(false)
         clearInterval(timerRef.current)
       }
@@ -120,13 +123,15 @@ function ChatInput({
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
+  const canSubmit = !!value.trim() || attachedFiles.length > 0 || Boolean(audioFile)
+
   const handleKeyDown = (event) => {
     if (event.key !== 'Enter') return
     event.preventDefault()
-    if (value.trim() || audioFile || attachedFiles.length) onSubmit?.()
+    if (canSubmit) onSubmit?.()
   }
 
-  const canSend = !!(value.trim() || audioFile || attachedFiles.length)
+  const canSend = canSubmit
 
   return (
     <div
@@ -180,12 +185,9 @@ function ChatInput({
               <p className="truncate text-xs font-medium text-slate-700">Voice recording</p>
               <p className="text-[11px] text-slate-400">{formatDuration(audioFile.duration ?? 0)}</p>
             </div>
-            <audio
-              src={audioFile.url}
-              controls
-              className="h-7 max-w-40 shrink-0"
-              style={{ accentColor: '#14b8a6' }}
-            />
+            <audio controls className="h-7 max-w-40 shrink-0" style={{ accentColor: '#14b8a6' }}>
+              <source src={audioFile.url} type={audioFile.mimeType} />
+            </audio>
           </div>
           <button
             onClick={onRemoveAudio}
@@ -243,7 +245,7 @@ function ChatInput({
                 {MODELS.map((model) => (
                   <button
                     key={model.id}
-                    onClick={() => { setSelectedModel(model); setOpen(false) }}
+                    onClick={() => { onModelChange?.(model.id); setOpen(false) }}
                     className={`flex w-full items-center justify-between px-4 py-2 text-left text-xs transition ${
                       selectedModel.id === model.id ? t.inputDropdownActive : t.inputDropdownItem
                     }`}

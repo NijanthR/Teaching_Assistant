@@ -33,7 +33,7 @@ function SettingsPage() {
               <span
                 className={`absolute flex h-6 w-6 items-center justify-center rounded-full shadow transition-all duration-300 ${
                   isDark
-                    ? 'left-[34px] bg-slate-900 text-teal-400'
+                    ? 'left-8.5 bg-slate-900 text-teal-400'
                     : 'left-1 bg-white text-teal-600'
                 }`}
               >

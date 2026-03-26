@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { FiCopy, FiRefreshCw, FiThumbsDown, FiThumbsUp } from 'react-icons/fi'
+import { FiCopy, FiPlay, FiRefreshCw, FiThumbsDown, FiThumbsUp } from 'react-icons/fi'
 import { RiSparklingFill } from 'react-icons/ri'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 import ChatBody from '../components/ChatBody.jsx'
 import ChatInput from '../components/ChatInput.jsx'
@@ -12,10 +14,110 @@ function formatDuration(seconds) {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file.'))
+    reader.readAsDataURL(file)
+  })
+}
+
+function readBlobAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('Failed to read audio.'))
+    reader.readAsDataURL(blob)
+  })
+}
+
+function normalizeAssistantText(text = '') {
+  let cleaned = String(text).trim()
+  if (cleaned.length >= 2 && cleaned.startsWith('"') && cleaned.endsWith('"')) {
+    cleaned = cleaned.slice(1, -1).trim()
+  }
+  cleaned = cleaned.replace(/\r\n/g, '\n')
+  cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, '$1')
+  cleaned = cleaned.replace(/`([^`]+)`/g, '$1')
+  return cleaned
+}
+
+function renderAssistantMessage(text) {
+  const cleaned = normalizeAssistantText(text)
+  if (!cleaned) return null
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        p: ({ children }) => <p className="whitespace-pre-wrap">{children}</p>,
+        ul: ({ children }) => <ul className="list-disc space-y-1 pl-5">{children}</ul>,
+        ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5">{children}</ol>,
+        li: ({ children }) => <li>{children}</li>,
+        blockquote: ({ children }) => (
+          <blockquote className="border-l-2 border-slate-300 pl-3 italic text-slate-600">{children}</blockquote>
+        ),
+        h1: ({ children }) => <h1 className="text-base font-semibold">{children}</h1>,
+        h2: ({ children }) => <h2 className="text-base font-semibold">{children}</h2>,
+        h3: ({ children }) => <h3 className="text-sm font-semibold">{children}</h3>,
+        code: ({ inline, className, children }) => {
+          if (inline) {
+            return <code className="rounded bg-slate-100 px-1 py-0.5 text-[0.85em] text-slate-700">{children}</code>
+          }
+          const lang = (className || '').replace('language-', '').trim() || 'Code'
+          const codeText = String(children || '')
+          const handleCopy = () => {
+            if (!codeText.trim()) return
+            navigator.clipboard?.writeText(codeText)
+          }
+          return (
+            <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+              <div className="flex items-center justify-between border-b border-slate-800 px-4 py-2 text-xs text-slate-300">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400">&lt;/&gt;</span>
+                  <span className="font-semibold text-slate-100">{lang}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopy}
+                    className="rounded-full border border-slate-700 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800"
+                  >
+                    <FiCopy className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-200 hover:bg-slate-800"
+                  >
+                    <FiPlay className="h-3.5 w-3.5" />
+                    Run
+                  </button>
+                </div>
+              </div>
+              <pre className="overflow-x-auto p-4 text-[0.85em] leading-relaxed text-slate-100">
+                <code>{codeText}</code>
+              </pre>
+            </div>
+          )
+        },
+        pre: ({ children }) => <>{children}</>,
+        a: ({ children, href }) => (
+          <a className="text-teal-600 underline underline-offset-2" href={href} target="_blank" rel="noreferrer">
+            {children}
+          </a>
+        ),
+      }}
+    >
+      {cleaned}
+    </ReactMarkdown>
+  )
+}
+
 function DashboardPage({ size }) {
   const isMobile = size === 'mobile'
   const [messages, setMessages] = useState([])
   const [inputValue, setInputValue] = useState('')
+  const [selectedModelId, setSelectedModelId] = useState('gemini-2.5-flash')
   const [audioFile, setAudioFile] = useState(null)
   const [attachedFiles, setAttachedFiles] = useState([])
   const [isFollowing, setIsFollowing] = useState(true)
@@ -51,10 +153,40 @@ function DashboardPage({ size }) {
     setIsFollowing(true)
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const trimmedValue = inputValue.trim()
-    if (!trimmedValue && !audioFile && attachedFiles.length === 0) return
+    const imageFiles = attachedFiles.filter((file) => file.type.startsWith('image/'))
+    let images = []
+    let audioPayload = null
+    try {
+      images = imageFiles.length
+        ? await Promise.all(
+            imageFiles.map(async (file) => ({
+              name: file.name,
+              type: file.type,
+              dataUrl: await readFileAsDataUrl(file),
+            }))
+          )
+        : []
+      audioPayload = audioFile
+        ? {
+            name: 'recording',
+            type: audioFile.mimeType || 'audio/webm',
+            duration: audioFile.duration ?? 0,
+            dataUrl: await readBlobAsDataUrl(audioFile.blob),
+          }
+        : null
+    } catch (err) {
+      setMessages((prevMessages) => [
+        ...prevMessages,
+        { id: `${Date.now()}-assistant`, role: 'assistant', text: `Error: ${err.message}` },
+      ])
+      return
+    }
+
+    if (!trimmedValue && images.length === 0 && !audioPayload) return
     const timestamp = Date.now()
+    const assistantId = `${timestamp}-assistant`
     setIsFollowing(true)
     setMessages((prevMessages) => [
       ...prevMessages,
@@ -69,11 +201,36 @@ function DashboardPage({ size }) {
           url: f.type.startsWith('image/') ? URL.createObjectURL(f) : null,
         })),
       },
-      { id: `${timestamp}-assistant`, role: 'assistant', text: "Thanks! I can help with that. What should we tackle first?" },
     ])
     setInputValue('')
     setAudioFile(null)
     setAttachedFiles([])
+
+    try {
+      const response = await fetch('/api/chat/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: trimmedValue, model: selectedModelId, images, audio: audioPayload }),
+      })
+      const contentType = response.headers.get('content-type') || ''
+      const data = contentType.includes('application/json') ? await response.json() : null
+
+      if (!response.ok) {
+        const fallback = data?.error || 'Request failed.'
+        const details = data ? fallback : `Request failed. Status ${response.status}.`
+        throw new Error(details)
+      }
+
+      setMessages((prevMessages) => [
+        ...prevMessages,
+        { id: assistantId, role: 'assistant', text: data.reply || '' },
+      ])
+    } catch (err) {
+      setMessages((prevMessages) => [
+        ...prevMessages,
+        { id: assistantId, role: 'assistant', text: `Error: ${err.message}` },
+      ])
+    }
   }
 
   const { t } = useTheme()
@@ -90,7 +247,7 @@ function DashboardPage({ size }) {
             <ChatBody variant="landing" size={size} />
           </div>
         ) : (
-          <div className="mx-auto w-full max-w-2xl px-4 py-6 space-y-6">
+          <div className="mx-auto w-full max-w-4xl px-4 py-6 space-y-6">
             {messages.map((message, index) => {
               const isLastUser = message.role === 'user' && index === lastUserIdx
               const isLastMsg = index === messages.length - 1
@@ -102,7 +259,7 @@ function DashboardPage({ size }) {
                 >
                   {message.role === 'user' ? (
                     <div className="flex justify-end">
-                      <div className={`max-w-[72%] rounded-2xl px-5 py-3 text-sm leading-6 ${t.userMsgBg} ${t.userMsgText}`}>
+                      <div className={`max-w-[96%] -mr-5 rounded-2xl px-5 py-3 text-sm leading-6 ${t.userMsgBg} ${t.userMsgText}`}>
                         {message.text && <p>{message.text}</p>}
                         {message.files?.length > 0 && (
                           <div className={`${message.text ? 'mt-2' : ''} flex flex-wrap gap-2`}>
@@ -129,7 +286,9 @@ function DashboardPage({ size }) {
                               <p className="text-xs font-medium text-slate-700">Voice recording</p>
                               <p className="text-[11px] text-slate-400">{formatDuration(message.audio.duration ?? 0)}</p>
                             </div>
-                            <audio src={message.audio.url} controls className="h-7 max-w-40" style={{ accentColor: '#14b8a6' }} />
+                            <audio controls className="h-7 max-w-40" style={{ accentColor: '#14b8a6' }}>
+                              <source src={message.audio.url} type={message.audio.mimeType} />
+                            </audio>
                           </div>
                         )}
                       </div>
@@ -139,8 +298,12 @@ function DashboardPage({ size }) {
                       <div className="mt-0.5 shrink-0 text-teal-500">
                         <RiSparklingFill className="h-5 w-5" />
                       </div>
-                      <div className="flex-1">
-                        <p className={`text-sm leading-7 ${t.assistantText}`}>{message.text}</p>
+                      <div className="flex-1 min-w-0">
+                        <div className={`w-full max-w-[96%] -ml-[37px] rounded-2xl border px-5 py-3 shadow-sm ${t.inputContainer}`}>
+                          <div className={`space-y-3 text-sm leading-7 ${t.assistantText}`}>
+                            {renderAssistantMessage(message.text)}
+                          </div>
+                        </div>
                         <div className="mt-3 flex items-center gap-3">
                           <button className={`rounded p-1 ${t.actionBtn}`}><FiThumbsUp className="h-4 w-4" /></button>
                           <button className={`rounded p-1 ${t.actionBtn}`}><FiThumbsDown className="h-4 w-4" /></button>
@@ -170,16 +333,18 @@ function DashboardPage({ size }) {
       ) : null}
 
       <div className="shrink-0 px-6 pb-4 pt-3">
-        <div className="mx-auto w-full max-w-2xl">
+        <div className="mx-auto w-full max-w-4xl">
           <ChatInput
             placeholder="Ask anything"
             showAddButton={!isMobile}
-            containerClassName={`${t.inputContainer} shadow-md`}
+            containerClassName={`${t.inputContainer} border-t-transparent shadow-md`}
             inputClassName={`text-base ${t.inputText}`}
             buttonClassName={t.inputBtn}
             value={inputValue}
             onChange={(event) => setInputValue(event.target.value)}
             onSubmit={handleSubmit}
+            selectedModelId={selectedModelId}
+            onModelChange={setSelectedModelId}
             audioFile={audioFile}
             onAudioRecorded={(file) => setAudioFile(file)}
             onRemoveAudio={() => setAudioFile(null)}

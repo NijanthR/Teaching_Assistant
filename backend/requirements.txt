@@ -1,0 +1,4 @@
+Django>=5.2
+python-dotenv>=1.0.1
+django-cors-headers>=4.4.0
+litellm[google]>=1.44.0
