@@ -5,7 +5,7 @@ import { useTheme } from '../context/ThemeContext.jsx'
 
 const navItems = [
   { label: 'Dashboard', icon: 'dashboard', to: '/' },
-  { label: 'Activity', icon: 'activity', to: '/activity' },
+  { label: 'Test', icon: 'activity', to: '/test' },
 ]
 
 const synexisLogoUrl = '/path/to/synexis-logo.png'

@@ -1,6 +1,6 @@
 import SideNav from './components/SideNav.jsx'
 import { Route, Routes } from 'react-router-dom'
-import ActivityPage from './pages/ActivityPage.jsx'
+import TestPage from './pages/TestPage.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import SettingsPage from './pages/SettingsPage.jsx'
 import { ThemeProvider } from './context/ThemeContext.jsx'
@@ -25,7 +25,7 @@ function DesktopChatPreview() {
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <Routes>
               <Route path="/" element={<DashboardPage />} />
-              <Route path="/activity" element={<ActivityPage />} />
+              <Route path="/test" element={<TestPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="*" element={<DashboardPage />} />
             </Routes>

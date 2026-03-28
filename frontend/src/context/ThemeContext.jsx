@@ -1,4 +1,29 @@
-import { createContext, useContext, useState } from 'react'
+import { createContext, useContext, useMemo, useState } from 'react'
+
+const THEME_STORAGE_KEY = 'ta-theme'
+const LANGUAGE_STORAGE_KEY = 'ta-language'
+
+const DEFAULT_THEME = 'light'
+const DEFAULT_LANGUAGE = 'English'
+
+export const LANGUAGE_OPTIONS = [
+  'English',
+  'Tamil',
+  'Hindi',
+  'French',
+  'Spanish',
+  'German',
+]
+
+function getInitialTheme() {
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
+  return stored === 'dark' || stored === 'light' ? stored : DEFAULT_THEME
+}
+
+function getInitialLanguage() {
+  const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY)
+  return LANGUAGE_OPTIONS.includes(stored) ? stored : DEFAULT_LANGUAGE
+}
 
 const ThemeContext = createContext(null)
 
@@ -74,12 +99,30 @@ export const themes = {
 }
 
 export function ThemeProvider({ children }) {
-  const [theme, setTheme] = useState('light')
+  const [theme, setTheme] = useState(getInitialTheme)
+  const [language, setLanguageState] = useState(getInitialLanguage)
 
-  const toggleTheme = () => setTheme((t) => (t === 'light' ? 'dark' : 'light'))
+  const toggleTheme = () => {
+    setTheme((currentTheme) => {
+      const nextTheme = currentTheme === 'light' ? 'dark' : 'light'
+      window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme)
+      return nextTheme
+    })
+  }
+
+  const setLanguage = (nextLanguage) => {
+    if (!LANGUAGE_OPTIONS.includes(nextLanguage)) return
+    setLanguageState(nextLanguage)
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, nextLanguage)
+  }
+
+  const contextValue = useMemo(
+    () => ({ theme, toggleTheme, language, setLanguage, t: themes[theme] }),
+    [theme, language]
+  )
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme, t: themes[theme] }}>
+    <ThemeContext.Provider value={contextValue}>
       {children}
     </ThemeContext.Provider>
   )

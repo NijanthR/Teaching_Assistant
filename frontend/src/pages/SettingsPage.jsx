@@ -1,8 +1,8 @@
 import { FiMoon, FiSun } from 'react-icons/fi'
-import { useTheme } from '../context/ThemeContext.jsx'
+import { LANGUAGE_OPTIONS, useTheme } from '../context/ThemeContext.jsx'
 
 function SettingsPage() {
-  const { theme, toggleTheme, t } = useTheme()
+  const { theme, toggleTheme, language, setLanguage, t } = useTheme()
   const isDark = theme === 'dark'
 
   return (
@@ -69,6 +69,36 @@ function SettingsPage() {
               <p className={`mt-2 text-xs font-medium ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Dark</p>
               <p className={`text-[11px] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Grey &amp; teal</p>
             </button>
+          </div>
+        </div>
+
+        <div className={`mt-6 rounded-2xl border p-6 ${isDark ? 'border-slate-600 bg-slate-800/60' : 'border-teal-200 bg-white/60'}`}>
+          <h2 className={`text-sm font-semibold uppercase tracking-wider ${isDark ? 'text-teal-400' : 'text-teal-600'}`}>Chat</h2>
+
+          <div className="mt-4 flex flex-col gap-2">
+            <label htmlFor="chat-language" className={`text-sm font-medium ${isDark ? 'text-teal-100' : 'text-teal-900'}`}>
+              Response language
+            </label>
+            <p className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+              New responses will be generated in your selected language.
+            </p>
+
+            <select
+              id="chat-language"
+              value={language}
+              onChange={(event) => setLanguage(event.target.value)}
+              className={`mt-1 w-full rounded-xl border px-3 py-2 text-sm outline-none transition ${
+                isDark
+                  ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-teal-500'
+                  : 'border-teal-200 bg-white text-slate-800 focus:border-teal-500'
+              }`}
+            >
+              {LANGUAGE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
