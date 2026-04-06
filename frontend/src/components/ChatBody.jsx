@@ -2,7 +2,7 @@ function ChatBody({ variant = 'desktop', actions = [], size = 'desktop' }) {
   if (variant === 'landing') {
     return (
       <h1 className={`font-medium text-slate-900 ${size === 'mobile' ? 'text-xl' : 'text-2xl sm:text-3xl'}`}>
-        What can I help with?
+        Hi Im a Your Teaching Assistant
       </h1>
     )
   }

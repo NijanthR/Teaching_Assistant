@@ -5,12 +5,14 @@ import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
+import { useNavigate } from 'react-router-dom'
 
 import ChatBody from '../components/ChatBody.jsx'
 import ChatInput from '../components/ChatInput.jsx'
 import { useTheme } from '../context/ThemeContext.jsx'
 
 const CHAT_CONVERSATION_ID_KEY = 'teaching-assistant-conversation-id'
+const PROFILE_STORAGE_KEY = 'teaching-assistant-google-user'
 
 function formatDuration(seconds) {
   const m = Math.floor(seconds / 60)
@@ -34,6 +36,18 @@ function readBlobAsDataUrl(blob) {
     reader.onerror = () => reject(reader.error || new Error('Failed to read audio.'))
     reader.readAsDataURL(blob)
   })
+}
+
+function getConversationStorageKey() {
+  try {
+    const raw = localStorage.getItem(PROFILE_STORAGE_KEY)
+    const profile = raw ? JSON.parse(raw) : null
+    const identity = String(profile?.sub || profile?.email || '').trim().toLowerCase()
+    if (identity) return `${CHAT_CONVERSATION_ID_KEY}:${identity}`
+  } catch {
+    // Ignore parsing errors and fall back to shared key.
+  }
+  return CHAT_CONVERSATION_ID_KEY
 }
 
 function normalizeAssistantText(text = '') {
@@ -73,6 +87,7 @@ async function exportPdfDocument({ fileName, title, sections }) {
   const margin = 40
   const maxTextWidth = pageWidth - margin * 2
   const lineHeight = 16
+  const dividerGap = 10
   let y = margin
 
   const ensureSpace = (requiredHeight) => {
@@ -82,20 +97,25 @@ async function exportPdfDocument({ fileName, title, sections }) {
   }
 
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(16)
+  doc.setFontSize(18)
   const titleLines = doc.splitTextToSize(title, maxTextWidth)
   ensureSpace(titleLines.length * lineHeight)
   doc.text(titleLines, margin, y)
-  y += titleLines.length * lineHeight + 10
+  y += titleLines.length * lineHeight + 8
+
+  doc.setDrawColor(210)
+  doc.setLineWidth(0.6)
+  doc.line(margin, y, pageWidth - margin, y)
+  y += dividerGap
 
   doc.setFont('helvetica', 'normal')
-  doc.setFontSize(11)
+  doc.setFontSize(10)
   const generatedAt = `Generated: ${new Date().toLocaleString()}`
   ensureSpace(lineHeight)
   doc.text(generatedAt, margin, y)
-  y += lineHeight + 10
+  y += lineHeight + 14
 
-  for (const section of sections) {
+  for (const [index, section] of sections.entries()) {
     const heading = String(section.heading || '').trim()
     const body = String(section.body || '').trim()
     if (!heading && !body) continue
@@ -103,10 +123,11 @@ async function exportPdfDocument({ fileName, title, sections }) {
     if (heading) {
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(13)
-      const headingLines = doc.splitTextToSize(heading, maxTextWidth)
-      ensureSpace(headingLines.length * lineHeight + 4)
+      const numberedHeading = `${index + 1}. ${heading}`
+      const headingLines = doc.splitTextToSize(numberedHeading, maxTextWidth)
+      ensureSpace(headingLines.length * lineHeight + 6)
       doc.text(headingLines, margin, y)
-      y += headingLines.length * lineHeight + 4
+      y += headingLines.length * lineHeight + 6
     }
 
     if (body) {
@@ -119,6 +140,14 @@ async function exportPdfDocument({ fileName, title, sections }) {
         y += lineHeight
       }
       y += 10
+
+    y += 10
+    if (y < pageHeight - margin - dividerGap) {
+      doc.setDrawColor(230)
+      doc.setLineWidth(0.4)
+      doc.line(margin, y, pageWidth - margin, y)
+      y += dividerGap
+    }
     }
   }
 
@@ -448,10 +477,12 @@ function renderAssistantMessage(text) {
 
 function DashboardPage({ size }) {
   const isMobile = size === 'mobile'
+  const navigate = useNavigate()
   const [messages, setMessages] = useState([])
+  const [conversationStorageKey, setConversationStorageKey] = useState(getConversationStorageKey())
   const [conversationId, setConversationId] = useState(() => {
     try {
-      return localStorage.getItem(CHAT_CONVERSATION_ID_KEY) || ''
+      return localStorage.getItem(getConversationStorageKey()) || ''
     } catch {
       return ''
     }
@@ -493,6 +524,28 @@ function DashboardPage({ size }) {
       }
     }
   }, [])
+
+  useEffect(() => {
+    const handleStorage = (event) => {
+      if (event.key !== PROFILE_STORAGE_KEY) return
+      const nextKey = getConversationStorageKey()
+      if (nextKey !== conversationStorageKey) {
+        setConversationStorageKey(nextKey)
+        historyLoadedRef.current = false
+        setConversationId(() => {
+          try {
+            return localStorage.getItem(nextKey) || ''
+          } catch {
+            return ''
+          }
+        })
+        setMessages([])
+      }
+    }
+
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [conversationStorageKey])
 
   useEffect(() => {
     if (!conversationId || historyLoadedRef.current) return
@@ -571,6 +624,12 @@ function DashboardPage({ size }) {
     await copyToClipboard(assistantText)
   }
 
+  const handleTakeTest = (topic) => {
+    const trimmed = String(topic || '').trim()
+    if (!trimmed) return
+    navigate(`/app/test?topic=${encodeURIComponent(trimmed)}`)
+  }
+
   const handleRegenerateResponse = async (assistantMessageId) => {
     if (isGenerating || regeneratingMessageId) return
 
@@ -616,7 +675,7 @@ function DashboardPage({ size }) {
       if (data?.conversation_id && data.conversation_id !== conversationId) {
         setConversationId(data.conversation_id)
         try {
-          localStorage.setItem(CHAT_CONVERSATION_ID_KEY, data.conversation_id)
+          localStorage.setItem(conversationStorageKey, data.conversation_id)
         } catch {
           // Ignore storage errors and continue with in-memory state.
         }
@@ -725,7 +784,9 @@ function DashboardPage({ size }) {
   const handleSubmit = async () => {
     const trimmedValue = inputValue.trim()
     const imageFiles = attachedFiles.filter((file) => file.type.startsWith('image/'))
+    const documentFiles = attachedFiles.filter((file) => !file.type.startsWith('image/'))
     let images = []
+    let documents = []
     let audioPayload = null
     try {
       images = imageFiles.length
@@ -733,6 +794,15 @@ function DashboardPage({ size }) {
             imageFiles.map(async (file) => ({
               name: file.name,
               type: file.type,
+              dataUrl: await readFileAsDataUrl(file),
+            }))
+          )
+        : []
+      documents = documentFiles.length
+        ? await Promise.all(
+            documentFiles.map(async (file) => ({
+              name: file.name,
+              type: file.type || 'application/octet-stream',
               dataUrl: await readFileAsDataUrl(file),
             }))
           )
@@ -753,7 +823,7 @@ function DashboardPage({ size }) {
       return
     }
 
-    if (!trimmedValue && images.length === 0 && !audioPayload) return
+    if (!trimmedValue && images.length === 0 && documents.length === 0 && !audioPayload) return
     const timestamp = Date.now()
     const assistantId = `${timestamp}-assistant`
     setIsFollowing(true)
@@ -786,6 +856,7 @@ function DashboardPage({ size }) {
           language,
           conversation_id: conversationId || undefined,
           images,
+          documents,
           audio: audioPayload,
         }),
       })
@@ -802,7 +873,7 @@ function DashboardPage({ size }) {
       if (data?.conversation_id && data.conversation_id !== conversationId) {
         setConversationId(data.conversation_id)
         try {
-          localStorage.setItem(CHAT_CONVERSATION_ID_KEY, data.conversation_id)
+          localStorage.setItem(conversationStorageKey, data.conversation_id)
         } catch {
           // Ignore storage errors and continue with in-memory state.
         }
@@ -909,6 +980,20 @@ function DashboardPage({ size }) {
                           </div>
                           <StudyFlowGraph topics={suggestedTopics} />
                           <ResponseSummary takeaways={summary?.takeaways} conclusion={summary?.conclusion} />
+                          {suggestedTopics.length ? (
+                            <div className="mt-4 flex flex-wrap gap-2">
+                              {suggestedTopics.slice(0, 3).map((topic) => (
+                                <button
+                                  key={`test-${topic}`}
+                                  type="button"
+                                  onClick={() => handleTakeTest(topic)}
+                                  className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${t.inputBtnBg} ${t.inputBtn}`}
+                                >
+                                  Take test: {topic}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
                         <div className="mt-3 flex items-center gap-3">
                           <button className={`rounded p-1 ${t.actionBtn}`}><FiThumbsUp className="h-4 w-4" /></button>

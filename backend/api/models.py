@@ -29,3 +29,15 @@ class ChatMessage(models.Model):
 
 	def __str__(self):
 		return f'{self.role}: {self.content[:60]}'
+
+
+class CommunityMessage(models.Model):
+	name = models.CharField(max_length=80)
+	message = models.TextField()
+	created_at = models.DateTimeField(auto_now_add=True)
+
+	class Meta:
+		ordering = ['created_at', 'id']
+
+	def __str__(self):
+		return f'{self.name}: {self.message[:60]}'
