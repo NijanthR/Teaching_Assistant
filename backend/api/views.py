@@ -45,18 +45,19 @@ COMMUNITY_BLOCKED_WORDS = [
 	"fuck",
 ]
 
-PROVIDER_KEYS = {
-	'openai': os.environ.get('OPENAI_API_KEY'),
-	'anthropic': os.getenv('ANTHROPIC_API_KEY'),
-	'google': (
-		os.getenv('GOOGLE_GENERATIVE_AI_API_KEY')
-		or os.getenv('GOOGLE_API_KEY')
-		or os.getenv('gemini_api_key')
-	),
-	'huggingface': os.getenv('HUGGINGFACE_API_KEY'),
-	'groq': os.getenv('GROQ_API_KEY') or os.getenv('groq_api_key'),
-	'deepseek': os.getenv('DEEPSEEK_API_KEY'),
-}
+def _get_provider_keys():
+	return {
+		'openai': os.environ.get('OPENAI_API_KEY'),
+		'anthropic': os.getenv('ANTHROPIC_API_KEY'),
+		'google': (
+			os.getenv('GOOGLE_GENERATIVE_AI_API_KEY')
+			or os.getenv('GOOGLE_API_KEY')
+			or os.getenv('gemini_api_key')
+		),
+		'huggingface': os.getenv('HUGGINGFACE_API_KEY'),
+		'groq': os.getenv('GROQ_API_KEY') or os.getenv('groq_api_key'),
+		'deepseek': os.getenv('DEEPSEEK_API_KEY'),
+	}
 
 VISION_PROVIDERS = {'openai', 'google', 'anthropic'}
 WHISPER_MODEL = os.getenv('WHISPER_MODEL', 'distil-whisper/distil-small.en')
@@ -69,19 +70,31 @@ MAX_TEST_QUESTIONS = int(os.getenv('MAX_TEST_QUESTIONS', '30'))
 MAX_CODING_TEST_CASES = int(os.getenv('MAX_CODING_TEST_CASES', '20'))
 CODE_RUN_TIMEOUT_SECONDS = int(os.getenv('CODE_RUN_TIMEOUT_SECONDS', '8'))
 MAX_DOCUMENT_TEXT_CHARS = int(os.getenv('MAX_DOCUMENT_TEXT_CHARS', '30000'))
-GOOGLE_OAUTH_CLIENT_ID = (
-	os.getenv('GOOGLE_OAUTH_CLIENT_ID')
-	or os.getenv('GOOGLE_CLIENT_ID')
-	or os.getenv('clint_id')
-	or ''
-).strip()
-GOOGLE_OAUTH_CLIENT_SECRET = (
-	os.getenv('GOOGLE_OAUTH_CLIENT_SECRET')
-	or os.getenv('GOOGLE_CLIENT_SECRET')
-	or os.getenv('secret_key')
-	or ''
-).strip()
-GOOGLE_OAUTH_REDIRECT_URI = (os.getenv('GOOGLE_OAUTH_REDIRECT_URI') or 'http://localhost:5173').strip()
+def _get_google_oauth_config():
+	client_id = (
+		os.getenv('GOOGLE_OAUTH_CLIENT_ID')
+		or os.getenv('GOOGLE_CLIENT_ID')
+		or os.getenv('CLIENT_ID')
+		or os.getenv('clint_id')
+		or ''
+	).strip()
+	client_secret = (
+		os.getenv('GOOGLE_OAUTH_CLIENT_SECRET')
+		or os.getenv('GOOGLE_CLIENT_SECRET')
+		or os.getenv('CLIENT_SECRET')
+		or os.getenv('secret_key')
+		or ''
+	).strip()
+	redirect_uri = (
+		os.getenv('GOOGLE_OAUTH_REDIRECT_URI')
+		or os.getenv('FRONTEND_URL')
+		or 'http://localhost:5173'
+	).strip()
+	return {
+		'client_id': client_id,
+		'client_secret': client_secret,
+		'redirect_uri': redirect_uri,
+	}
 
 # Temporary chat store kept in process memory only; it is cleared on server restart.
 _CONVERSATION_STORE = OrderedDict()
@@ -171,8 +184,9 @@ def _get_model_config(model_id):
 	if not config:
 		return None
 	provider = config['provider']
+	provider_keys = _get_provider_keys()
 	google_keys = _get_rotated_google_keys() if provider == 'google' else []
-	selected_key = google_keys[0] if google_keys else PROVIDER_KEYS.get(provider)
+	selected_key = google_keys[0] if google_keys else provider_keys.get(provider)
 	return {
 		**config,
 		'api_key': selected_key,
@@ -876,7 +890,7 @@ def chat(request):
 			return JsonResponse({'error': 'Selected model does not support images.'}, status=400)
 
 		if audio:
-			groq_api_key = (PROVIDER_KEYS.get('groq') or '').strip()
+			groq_api_key = (_get_provider_keys().get('groq') or '').strip()
 			if not groq_api_key:
 				return JsonResponse({'error': 'Missing GROQ_API_KEY (or groq_api_key) in backend .env.'}, status=500)
 			try:
@@ -1171,12 +1185,13 @@ def community_messages_delete(request):
 @csrf_exempt
 @require_GET
 def google_auth_config(request):
-	if not GOOGLE_OAUTH_CLIENT_ID:
+	oauth = _get_google_oauth_config()
+	if not oauth['client_id']:
 		return JsonResponse({'error': 'Google OAuth client ID is not configured on the server.'}, status=500)
 	return JsonResponse(
 		{
-			'clientId': GOOGLE_OAUTH_CLIENT_ID,
-			'redirectUri': GOOGLE_OAUTH_REDIRECT_URI,
+			'clientId': oauth['client_id'],
+			'redirectUri': oauth['redirect_uri'],
 		}
 	)
 
@@ -1184,7 +1199,8 @@ def google_auth_config(request):
 @csrf_exempt
 @require_POST
 def google_auth(request):
-	if not GOOGLE_OAUTH_CLIENT_ID or not GOOGLE_OAUTH_CLIENT_SECRET:
+	oauth = _get_google_oauth_config()
+	if not oauth['client_id'] or not oauth['client_secret']:
 		return JsonResponse({'error': 'Google OAuth credentials are missing on the server.'}, status=500)
 
 	try:
@@ -1193,7 +1209,7 @@ def google_auth(request):
 		return JsonResponse({'error': 'Invalid JSON payload.'}, status=400)
 
 	code = str(payload.get('code') or '').strip()
-	redirect_uri = str(payload.get('redirect_uri') or GOOGLE_OAUTH_REDIRECT_URI or 'postmessage').strip()
+	redirect_uri = str(payload.get('redirect_uri') or oauth['redirect_uri'] or 'postmessage').strip()
 	if not code:
 		return JsonResponse({'error': 'Authorization code is required.'}, status=400)
 	if not redirect_uri:
@@ -1204,8 +1220,8 @@ def google_auth(request):
 			'https://oauth2.googleapis.com/token',
 			{
 				'code': code,
-				'client_id': GOOGLE_OAUTH_CLIENT_ID,
-				'client_secret': GOOGLE_OAUTH_CLIENT_SECRET,
+				'client_id': oauth['client_id'],
+				'client_secret': oauth['client_secret'],
 				'redirect_uri': redirect_uri,
 				'grant_type': 'authorization_code',
 			},
@@ -1266,7 +1282,8 @@ def google_auth(request):
 @csrf_exempt
 @require_POST
 def google_auth_token(request):
-	if not GOOGLE_OAUTH_CLIENT_ID:
+	oauth = _get_google_oauth_config()
+	if not oauth['client_id']:
 		return JsonResponse({'error': 'Google OAuth client ID is not configured on the server.'}, status=500)
 
 	try:
@@ -1294,7 +1311,7 @@ def google_auth_token(request):
 		return JsonResponse({'error': 'Unable to verify Google token.'}, status=502)
 
 	aud = str(token_info.get('aud') or token_info.get('issued_to') or '').strip()
-	if aud and aud != GOOGLE_OAUTH_CLIENT_ID:
+	if aud and aud != oauth['client_id']:
 		return JsonResponse({'error': 'Google token does not belong to this client.'}, status=400)
 
 	if access_token:
