@@ -203,7 +203,7 @@ function ChatInput({
       {isRecording ? (
         <div className="flex items-center gap-2 py-1">
           <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-          <span className="text-xs font-medium text-red-500">Recording… {formatDuration(recordingSeconds)}</span>
+          <span className="text-xs font-medium text-red-500">RecordingGǪ {formatDuration(recordingSeconds)}</span>
         </div>
       ) : (
         <input

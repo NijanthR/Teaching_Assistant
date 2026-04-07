@@ -4,6 +4,8 @@ import { FiMail, FiShield, FiUser } from 'react-icons/fi'
 import { useTheme } from '../context/ThemeContext.jsx'
 
 const PROFILE_STORAGE_KEY = 'teaching-assistant-google-user'
+const CHAT_CONVERSATION_ID_KEY = 'teaching-assistant-conversation-id'
+const CHAT_MESSAGES_KEY = 'teaching-assistant-chat-messages'
 
 function getStoredProfile() {
   try {
@@ -36,6 +38,18 @@ function ProfilePage() {
   const provider = profile?.email ? 'Google' : 'Local'
 
   const handleSignOut = () => {
+    const identity = String(profile?.sub || profile?.email || '').trim().toLowerCase()
+    const profileConversationKey = identity
+      ? `${CHAT_CONVERSATION_ID_KEY}:${identity}`
+      : CHAT_CONVERSATION_ID_KEY
+    const profileMessagesKey = identity
+      ? `${CHAT_MESSAGES_KEY}:${identity}`
+      : CHAT_MESSAGES_KEY
+
+    localStorage.removeItem(CHAT_CONVERSATION_ID_KEY)
+    localStorage.removeItem(profileConversationKey)
+    localStorage.removeItem(CHAT_MESSAGES_KEY)
+    localStorage.removeItem(profileMessagesKey)
     localStorage.removeItem(PROFILE_STORAGE_KEY)
     navigate('/', { replace: true })
   }

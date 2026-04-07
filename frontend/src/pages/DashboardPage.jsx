@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { FiCopy, FiDownload, FiPlay, FiRefreshCw, FiThumbsDown, FiThumbsUp } from 'react-icons/fi'
+import { FiCopy, FiDownload, FiPlay, FiRefreshCw, FiThumbsDown, FiThumbsUp, FiTrash2 } from 'react-icons/fi'
 import { RiSparklingFill } from 'react-icons/ri'
 import ReactMarkdown from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
@@ -12,6 +12,7 @@ import ChatInput from '../components/ChatInput.jsx'
 import { useTheme } from '../context/ThemeContext.jsx'
 
 const CHAT_CONVERSATION_ID_KEY = 'teaching-assistant-conversation-id'
+const CHAT_MESSAGES_KEY = 'teaching-assistant-chat-messages'
 const PROFILE_STORAGE_KEY = 'teaching-assistant-google-user'
 
 function formatDuration(seconds) {
@@ -48,6 +49,18 @@ function getConversationStorageKey() {
     // Ignore parsing errors and fall back to shared key.
   }
   return CHAT_CONVERSATION_ID_KEY
+}
+
+function getMessagesStorageKey() {
+  try {
+    const raw = localStorage.getItem(PROFILE_STORAGE_KEY)
+    const profile = raw ? JSON.parse(raw) : null
+    const identity = String(profile?.sub || profile?.email || '').trim().toLowerCase()
+    if (identity) return `${CHAT_MESSAGES_KEY}:${identity}`
+  } catch {
+    // Ignore parsing errors and fall back to shared key.
+  }
+  return CHAT_MESSAGES_KEY
 }
 
 function normalizeAssistantText(text = '') {
@@ -216,13 +229,231 @@ function getTopicMeaning(topic) {
   if (value.includes('beta') || value.includes('coefficient')) return 'A number that shows how strongly a feature affects the result.'
   if (value.includes('feature')) return 'An input variable used for prediction.'
   if (value.includes('intercept')) return 'The starting value when input is zero.'
+  if (value.includes('common confusion')) return 'A frequent misunderstanding and how to avoid it.'
+  if (value.includes('quick recap')) return 'A short summary to lock in understanding.'
+  if (value.includes('given') || value.includes('problem statement')) return 'What information is provided and what is being asked.'
+  if (value.includes('complexity')) return 'How performance changes with input size and edge cases.'
+  if (value.includes('time strategy')) return 'How to prioritize steps and avoid spending too long.'
   return 'A key concept to understand before moving to the next step.'
 }
 
-function suggestStudyTopics(text = '') {
+function extractPromptTopic(prompt = '') {
+  const cleaned = String(prompt || '')
+    .replace(/\s+/g, ' ')
+    .replace(/[?!.]+$/g, '')
+    .trim()
+
+  if (!cleaned) return ''
+
+  const greetingPattern = /^(hi|hello|hey|yo|hola|namaste|good\s+(morning|afternoon|evening)|how are you|what'?s up|sup|thanks?|thank you)$/i
+  if (greetingPattern.test(cleaned)) return ''
+
+  const lower = cleaned.toLowerCase()
+  const patterns = [
+    /(?:about|on|regarding|for)\s+([^?.!,;]+)/i,
+    /(?:what is|what are|explain|teach|describe|help me understand|summarize)\s+([^?.!,;]+)/i,
+  ]
+
+  for (const pattern of patterns) {
+    const match = cleaned.match(pattern)
+    if (match?.[1]) {
+      return toSentenceCase(match[1])
+    }
+  }
+
+  if (lower.length <= 80) return toSentenceCase(cleaned)
+  return toSentenceCase(cleaned.split(' ').slice(0, 10).join(' '))
+}
+
+function isLikelyStudyRequest(prompt = '', response = '') {
+  const promptText = String(prompt || '').trim().toLowerCase()
+  const responseText = String(response || '').trim().toLowerCase()
+
+  if (!promptText && !responseText) return false
+
+  const greetingOrSmallTalkPattern = /(^(hi|hello|hey|yo|hola|namaste)\b|how are you|what'?s up|sup\b|good\s+(morning|afternoon|evening)|thank(s| you)?\b|bye\b)/i
+  const studyKeywordPattern = /(explain|teach|learn|study|topic|concept|define|definition|difference|compare|how|why|what is|solve|problem|equation|formula|derivation|example|exercise|chapter|syllabus|exam|test|quiz|revision|algorithm|model|theorem|proof|interview)/i
+  const structurePattern = /(^\s*[-*]\s+|^\s*\d+\.\s+|^\s*#{1,3}\s+)/m
+  const mathPattern = /(\$[^$]+\$|\b\d+\b|=|\+|-|\*|\/|\^)/
+
+  if (greetingOrSmallTalkPattern.test(promptText) && !studyKeywordPattern.test(promptText)) {
+    return false
+  }
+
+  if (studyKeywordPattern.test(promptText)) return true
+  if (studyKeywordPattern.test(responseText)) return true
+  if (structurePattern.test(responseText)) return true
+  if (mathPattern.test(responseText) && promptText.split(/\s+/).length >= 3) return true
+
+  return false
+}
+
+function tokenizeTopic(value = '') {
+  const stopWords = new Set([
+    'the', 'a', 'an', 'and', 'or', 'to', 'of', 'in', 'on', 'for', 'is', 'are', 'with', 'from', 'by', 'about',
+    'what', 'how', 'why', 'when', 'where', 'which', 'who', 'it', 'this', 'that', 'these', 'those', 'explain',
+    'describe', 'teach', 'help', 'understand',
+  ])
+
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !stopWords.has(token))
+}
+
+function areTopicsRelated(candidate = '', promptTopic = '') {
+  const promptTokens = tokenizeTopic(promptTopic)
+  if (!promptTokens.length) return true
+  const candidateTokens = new Set(tokenizeTopic(candidate))
+  return promptTokens.some((token) => candidateTokens.has(token))
+}
+
+function getResponseFocusAreas(text = '') {
+  const value = String(text || '').toLowerCase()
+  const focus = []
+
+  const add = (item) => {
+    if (!item) return
+    if (focus.includes(item)) return
+    focus.push(item)
+  }
+
+  if (/(what is|definition|defined as|means|refers to)/.test(value)) add('basics')
+  if (/(how it works|workflow|steps|process|works by)/.test(value)) add('how it works')
+  if (/(equation|formula|beta|coefficient|slope|intercept)/.test(value)) add('equation and interpretation')
+  if (/(assumption|normality|linearity|independence|multicollinearity)/.test(value)) add('assumptions')
+  if (/(example|sample|case study|scenario)/.test(value)) add('examples')
+  if (/(application|use case|real world|industry)/.test(value)) add('applications')
+
+  return focus.slice(0, 4)
+}
+
+function getPromptFocusAreas(prompt = '') {
+  const value = String(prompt || '').toLowerCase()
+  const focus = []
+
+  const add = (item) => {
+    if (!item) return
+    if (focus.includes(item)) return
+    focus.push(item)
+  }
+
+  if (/(what is|what are|define|definition|meaning)/.test(value)) add('basics')
+  if (/(how|work|process|steps|mechanism)/.test(value)) add('how it works')
+  if (/(equation|formula|derive|interpret|slope|intercept|coefficient)/.test(value)) add('equation and interpretation')
+  if (/(assumption|condition|constraint|validity)/.test(value)) add('assumptions')
+  if (/(example|solve|problem|practice|numerical|sample)/.test(value)) add('examples')
+  if (/(application|use case|real world|industry|where used)/.test(value)) add('applications')
+
+  return focus.slice(0, 4)
+}
+
+function buildClearSuggestion(topic, focus) {
+  const cleanTopic = String(topic || '').trim()
+  const cleanFocus = String(focus || '').trim()
+  if (!cleanTopic || !cleanFocus) return ''
+
+  if (cleanFocus === 'basics') return `Basics of ${cleanTopic}`
+  if (cleanFocus === 'how it works') return `How ${cleanTopic} works`
+  if (cleanFocus === 'equation and interpretation') return `${cleanTopic}: equation and interpretation`
+  if (cleanFocus === 'assumptions') return `${cleanTopic}: assumptions and checks`
+  if (cleanFocus === 'examples') return `${cleanTopic}: examples and solving`
+  if (cleanFocus === 'applications') return `${cleanTopic}: practical applications`
+  return `${cleanTopic}: ${cleanFocus}`
+}
+
+function detectQuestionStyle(prompt = '', response = '') {
+  const value = `${prompt} ${response}`.toLowerCase()
+
+  if (/(code|implement|function|python|javascript|java|c\+\+|algorithm|program)/.test(value)) return 'coding'
+  if (/(compare|difference|vs\.?|versus|distinguish)/.test(value)) return 'comparison'
+  if (/(solve|numerical|calculate|find|compute|problem)/.test(value)) return 'problem-solving'
+  if (/(steps|process|workflow|pipeline|how.*works)/.test(value)) return 'process'
+  if (/(exam|test|interview|mcq|revision|prepare)/.test(value)) return 'exam'
+  if (/(what is|define|definition|meaning|introduce|basics)/.test(value)) return 'definition'
+
+  return 'conceptual'
+}
+
+function getStudyFlowTemplate(topic, style) {
+  const cleanTopic = String(topic || '').trim() || 'this topic'
+
+  if (style === 'definition') {
+    return [
+      `Core idea of ${cleanTopic}`,
+      `${cleanTopic}: key terms`,
+      `${cleanTopic}: simple example`,
+      `${cleanTopic}: common confusion`,
+      `${cleanTopic}: quick recap`,
+    ]
+  }
+
+  if (style === 'process') {
+    return [
+      `${cleanTopic}: goal`,
+      `${cleanTopic}: inputs`,
+      `How ${cleanTopic} works`,
+      `${cleanTopic}: output interpretation`,
+      `${cleanTopic}: real-world flow`,
+    ]
+  }
+
+  if (style === 'problem-solving') {
+    return [
+      `${cleanTopic}: problem statement`,
+      `${cleanTopic}: choose method`,
+      `${cleanTopic}: step-by-step solving`,
+      `${cleanTopic}: verify result`,
+      `${cleanTopic}: practice variation`,
+    ]
+  }
+
+  if (style === 'comparison') {
+    return [
+      `${cleanTopic}: option A`,
+      `${cleanTopic}: option B`,
+      `${cleanTopic}: key differences`,
+      `${cleanTopic}: when to use each`,
+      `${cleanTopic}: pitfalls`,
+    ]
+  }
+
+  if (style === 'coding') {
+    return [
+      `${cleanTopic}: problem statement`,
+      `${cleanTopic}: approach`,
+      `${cleanTopic}: code structure`,
+      `${cleanTopic}: dry run`,
+      `${cleanTopic}: complexity and edge cases`,
+    ]
+  }
+
+  if (style === 'exam') {
+    return [
+      `${cleanTopic}: high-yield basics`,
+      `${cleanTopic}: must-know concepts`,
+      `${cleanTopic}: question patterns`,
+      `${cleanTopic}: time strategy`,
+      `${cleanTopic}: final revision`,
+    ]
+  }
+
+  return [
+    `Basics of ${cleanTopic}`,
+    `How ${cleanTopic} works`,
+    `${cleanTopic}: equation and interpretation`,
+    `${cleanTopic}: examples and solving`,
+    `${cleanTopic}: intuition`,
+  ]
+}
+
+function suggestStudyTopics(text = '', userPrompt = '') {
   const cleaned = normalizeAssistantText(text)
     .replace(/\$\$[\s\S]*?\$\$/g, ' ')
     .replace(/\$[^$]*\$/g, ' ')
+
+  if (!isLikelyStudyRequest(userPrompt, cleaned)) return []
 
   const lines = cleaned.split('\n').map((line) => line.trim()).filter(Boolean)
   const candidates = []
@@ -250,7 +481,18 @@ function suggestStudyTopics(text = '') {
     }
   }
 
-  const ignored = new Set(['introduction', 'summary', 'conclusion', 'example'])
+  const ignored = new Set([
+    'introduction',
+    'summary',
+    'conclusion',
+    'example',
+    'what it is',
+    'the goal',
+    'how it works',
+    'how it works simply',
+    'important topics',
+    'key takeaways',
+  ])
   const normalized = candidates
     .map((item) => item.replace(/[*_`#>]/g, '').replace(/[.:]+$/, '').trim())
     .map(toSentenceCase)
@@ -267,7 +509,73 @@ function suggestStudyTopics(text = '') {
     if (deduped.length >= 6) break
   }
 
-  return deduped
+  const promptTopic = extractPromptTopic(userPrompt)
+  if (!promptTopic) return deduped
+
+  const style = detectQuestionStyle(userPrompt, cleaned)
+  const templateTopics = getStudyFlowTemplate(promptTopic, style)
+  const related = deduped.filter((topic) => areTopicsRelated(topic, promptTopic))
+  const promptFocusAreas = getPromptFocusAreas(userPrompt)
+  const focusAreas = getResponseFocusAreas(cleaned)
+  const mergedFocusAreas = [...promptFocusAreas, ...focusAreas].filter((item, index, arr) => arr.indexOf(item) === index)
+
+  const suggestions = []
+  const addSuggestion = (value) => {
+    const topic = String(value || '').trim()
+    if (!topic) return
+    if (suggestions.some((item) => item.toLowerCase() === topic.toLowerCase())) return
+    suggestions.push(topic)
+  }
+
+  templateTopics.forEach(addSuggestion)
+  mergedFocusAreas.forEach((focus) => addSuggestion(buildClearSuggestion(promptTopic, focus)))
+
+  related.forEach((topic) => {
+    const singleWord = /^\w+$/.test(topic)
+    if (singleWord) {
+      addSuggestion(`${promptTopic}: ${topic.toLowerCase()} concepts`)
+      return
+    }
+    addSuggestion(topic)
+  })
+
+  if (suggestions.length >= 3) return suggestions.slice(0, 6)
+
+  const enriched = []
+  const addUnique = (value) => {
+    const topic = String(value || '').trim()
+    if (!topic) return
+    if (enriched.some((item) => item.toLowerCase() === topic.toLowerCase())) return
+    enriched.push(topic)
+  }
+
+  related.forEach(addUnique)
+  deduped.forEach((topic) => {
+    const singleWord = /^\w+$/.test(topic)
+    if (singleWord) {
+      addUnique(`${promptTopic}: ${topic.toLowerCase()} concepts`)
+    } else {
+      addUnique(`${promptTopic}: ${topic}`)
+    }
+  })
+
+  if (!enriched.length) {
+    addUnique(buildClearSuggestion(promptTopic, 'basics'))
+    addUnique(buildClearSuggestion(promptTopic, 'how it works'))
+    addUnique(buildClearSuggestion(promptTopic, 'applications'))
+  }
+
+  enriched.forEach(addSuggestion)
+
+  if (suggestions.length < 3) {
+    addSuggestion(buildClearSuggestion(promptTopic, 'basics'))
+    addSuggestion(buildClearSuggestion(promptTopic, 'how it works'))
+    addSuggestion(buildClearSuggestion(promptTopic, 'equation and interpretation'))
+    addSuggestion(buildClearSuggestion(promptTopic, 'examples'))
+    addSuggestion(buildClearSuggestion(promptTopic, 'applications'))
+  }
+
+  return suggestions.slice(0, 6)
 }
 
 function summarizeLearningPoints(text = '', topics = []) {
@@ -340,8 +648,19 @@ function ResponseSummary({ takeaways, conclusion }) {
   )
 }
 
-function StudyFlowGraph({ topics }) {
+function StudyFlowGraph({ topics, flowStyle = 'conceptual' }) {
   if (!topics?.length) return null
+
+  const flowPalette = {
+    coding: 'border-indigo-200 bg-indigo-50',
+    comparison: 'border-amber-200 bg-amber-50',
+    'problem-solving': 'border-rose-200 bg-rose-50',
+    process: 'border-sky-200 bg-sky-50',
+    exam: 'border-emerald-200 bg-emerald-50',
+    definition: 'border-violet-200 bg-violet-50',
+    conceptual: 'border-teal-200 bg-teal-50',
+  }
+  const nodeTone = flowPalette[flowStyle] || flowPalette.conceptual
 
   return (
     <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -367,7 +686,7 @@ function StudyFlowGraph({ topics }) {
         <div className="inline-flex min-w-full items-center gap-2">
           {topics.map((topic, index) => (
             <div key={`${topic}-${index}`} className="inline-flex items-center gap-2">
-              <div className="rounded-xl border border-teal-200 bg-teal-50 px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm">
+              <div className={`rounded-xl border px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm ${nodeTone}`}>
                 {topic}
               </div>
               {index < topics.length - 1 ? <span className="text-slate-400">→</span> : null}
@@ -380,6 +699,17 @@ function StudyFlowGraph({ topics }) {
 }
 
 function renderAssistantMessage(text) {
+  const getShortSymbolLabel = (value = '') => {
+    const token = String(value || '').trim().toLowerCase()
+    const symbolMap = {
+      w: 'w (weight)',
+      b: 'b (bias/intercept)',
+      x: 'x (input feature)',
+      y: 'y (target output)',
+    }
+    return symbolMap[token] || String(value || '').trim()
+  }
+
   const shouldUseFullCodeBox = (value = '') => {
     const snippet = String(value || '').trim()
     if (!snippet) return false
@@ -425,6 +755,17 @@ function renderAssistantMessage(text) {
             return <code className="rounded bg-slate-100 px-1 py-0.5 text-[0.85em] text-slate-700">{children}</code>
           }
           const codeText = String(children || '')
+          const trimmedCode = codeText.trim()
+
+          // Render tiny variable snippets inline-style so they stay with explanation text.
+          if (!trimmedCode.includes('\n') && /^[A-Za-z]{1,2}$/.test(trimmedCode)) {
+            return (
+              <span className="inline rounded bg-slate-100 px-1.5 py-0.5 text-[0.9em] text-slate-700">
+                {getShortSymbolLabel(trimmedCode)}
+              </span>
+            )
+          }
+
           if (!shouldUseFullCodeBox(codeText)) {
             return (
               <pre className="overflow-x-auto rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[0.9em] leading-7 text-slate-700">
@@ -478,7 +819,16 @@ function renderAssistantMessage(text) {
 function DashboardPage({ size }) {
   const isMobile = size === 'mobile'
   const navigate = useNavigate()
-  const [messages, setMessages] = useState([])
+  const [messagesStorageKey, setMessagesStorageKey] = useState(getMessagesStorageKey())
+  const [messages, setMessages] = useState(() => {
+    try {
+      const raw = localStorage.getItem(getMessagesStorageKey())
+      const parsed = raw ? JSON.parse(raw) : []
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  })
   const [conversationStorageKey, setConversationStorageKey] = useState(getConversationStorageKey())
   const [conversationId, setConversationId] = useState(() => {
     try {
@@ -490,7 +840,7 @@ function DashboardPage({ size }) {
   const [isGenerating, setIsGenerating] = useState(false)
   const [regeneratingMessageId, setRegeneratingMessageId] = useState(null)
   const [inputValue, setInputValue] = useState('')
-  const [selectedModelId, setSelectedModelId] = useState('hf-llama3-8b')
+  const [selectedModelId, setSelectedModelId] = useState('gemini-2.5-flash')
   const [audioFile, setAudioFile] = useState(null)
   const [attachedFiles, setAttachedFiles] = useState([])
   const [isFollowing, setIsFollowing] = useState(true)
@@ -529,8 +879,10 @@ function DashboardPage({ size }) {
     const handleStorage = (event) => {
       if (event.key !== PROFILE_STORAGE_KEY) return
       const nextKey = getConversationStorageKey()
+      const nextMessagesKey = getMessagesStorageKey()
       if (nextKey !== conversationStorageKey) {
         setConversationStorageKey(nextKey)
+        setMessagesStorageKey(nextMessagesKey)
         historyLoadedRef.current = false
         setConversationId(() => {
           try {
@@ -539,13 +891,63 @@ function DashboardPage({ size }) {
             return ''
           }
         })
-        setMessages([])
+        setMessages(() => {
+          try {
+            const raw = localStorage.getItem(nextMessagesKey)
+            const parsed = raw ? JSON.parse(raw) : []
+            const safeMessages = Array.isArray(parsed) ? parsed : []
+            if (safeMessages.length) return safeMessages
+
+            // Avoid accidental clearing when identity storage changes but chat already exists in memory.
+            if (messages.length) {
+              localStorage.setItem(nextMessagesKey, JSON.stringify(messages))
+              return messages
+            }
+
+            return []
+          } catch {
+            return messages.length ? messages : []
+          }
+        })
       }
     }
 
     window.addEventListener('storage', handleStorage)
     return () => window.removeEventListener('storage', handleStorage)
-  }, [conversationStorageKey])
+  }, [conversationStorageKey, messages])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(messagesStorageKey, JSON.stringify(messages))
+    } catch {
+      // Ignore storage errors and keep in-memory state.
+    }
+  }, [messages, messagesStorageKey])
+
+  useEffect(() => {
+    const nextMessagesKey = getMessagesStorageKey()
+    if (nextMessagesKey === messagesStorageKey) return
+
+    setMessagesStorageKey(nextMessagesKey)
+    setMessages(() => {
+      try {
+        const raw = localStorage.getItem(nextMessagesKey)
+        const parsed = raw ? JSON.parse(raw) : []
+        const safeMessages = Array.isArray(parsed) ? parsed : []
+        if (safeMessages.length) return safeMessages
+
+        // Keep existing chat when storage key changes and destination key is empty.
+        if (messages.length) {
+          localStorage.setItem(nextMessagesKey, JSON.stringify(messages))
+          return messages
+        }
+
+        return []
+      } catch {
+        return messages.length ? messages : []
+      }
+    })
+  }, [messagesStorageKey, messages])
 
   useEffect(() => {
     if (!conversationId || historyLoadedRef.current) return
@@ -741,6 +1143,45 @@ function DashboardPage({ size }) {
     }
   }
 
+  const handleDeleteChat = () => {
+    if (!messages.length) return
+
+    const shouldDelete = window.confirm('Delete this chat permanently? This cannot be undone.')
+    if (!shouldDelete) return
+
+    if (typingTimerRef.current) {
+      clearTimeout(typingTimerRef.current)
+      typingTimerRef.current = null
+    }
+
+    // Revoke any temporary object URLs attached to user-uploaded files.
+    messages.forEach((msg) => {
+      if (!Array.isArray(msg?.files)) return
+      msg.files.forEach((file) => {
+        if (file?.url) {
+          URL.revokeObjectURL(file.url)
+        }
+      })
+    })
+
+    try {
+      localStorage.removeItem(messagesStorageKey)
+      localStorage.removeItem(conversationStorageKey)
+    } catch {
+      // Ignore storage failures and continue resetting in-memory state.
+    }
+
+    historyLoadedRef.current = true
+    setConversationId('')
+    setMessages([])
+    setInputValue('')
+    setAudioFile(null)
+    setAttachedFiles([])
+    setIsGenerating(false)
+    setRegeneratingMessageId(null)
+    setIsFollowing(true)
+  }
+
   const animateAssistantResponse = async (messageId, fullText) => {
     const text = String(fullText || '')
     const chunks = text.match(/\S+\s*/g) || []
@@ -825,12 +1266,13 @@ function DashboardPage({ size }) {
 
     if (!trimmedValue && images.length === 0 && documents.length === 0 && !audioPayload) return
     const timestamp = Date.now()
+    const userMessageId = `${timestamp}-user`
     const assistantId = `${timestamp}-assistant`
     setIsFollowing(true)
     setMessages((prevMessages) => [
       ...prevMessages,
       {
-        id: `${timestamp}-user`,
+        id: userMessageId,
         role: 'user',
         text: trimmedValue,
         audio: audioFile ?? null,
@@ -879,6 +1321,13 @@ function DashboardPage({ size }) {
         }
       }
 
+      const transcript = String(data?.transcript || '').trim()
+      if (audioPayload && transcript) {
+        setMessages((prevMessages) => prevMessages.map((msg) => (
+          msg.id === userMessageId ? { ...msg, text: transcript } : msg
+        )))
+      }
+
       setMessages((prevMessages) => [
         ...prevMessages,
         { id: assistantId, role: 'assistant', text: '' },
@@ -910,7 +1359,18 @@ function DashboardPage({ size }) {
           </div>
         ) : (
           <div className="mx-auto w-full max-w-4xl px-4 py-6 space-y-6">
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleDeleteChat}
+                disabled={!messages.length || isGenerating || Boolean(regeneratingMessageId)}
+                className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium ${t.actionBtn}`}
+                title="Delete current chat"
+                aria-label="Delete current chat"
+              >
+                <FiTrash2 className="h-4 w-4" />
+                Delete Chat
+              </button>
               <button
                 type="button"
                 onClick={handleDownloadEntireChatPdf}
@@ -924,7 +1384,15 @@ function DashboardPage({ size }) {
             {messages.map((message, index) => {
               const isLastUser = message.role === 'user' && index === lastUserIdx
               const isLastMsg = index === messages.length - 1
-              const suggestedTopics = message.role === 'assistant' ? suggestStudyTopics(message.text) : []
+              const previousUserMessage = message.role === 'assistant'
+                ? [...messages.slice(0, index)].reverse().find((item) => item.role === 'user')
+                : null
+              const suggestedTopics = message.role === 'assistant'
+                ? suggestStudyTopics(message.text, previousUserMessage?.text || '')
+                : []
+              const flowStyle = message.role === 'assistant'
+                ? detectQuestionStyle(previousUserMessage?.text || '', message.text)
+                : 'conceptual'
               const summary = message.role === 'assistant' ? summarizeLearningPoints(message.text, suggestedTopics) : null
               return (
                 <div
@@ -974,11 +1442,14 @@ function DashboardPage({ size }) {
                         <RiSparklingFill className="h-5 w-5" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className={`w-full max-w-[96%] -ml-[37px] rounded-2xl border px-5 py-3 shadow-sm ${t.inputContainer}`}>
+                        <div
+                          className={`w-full max-w-[96%] rounded-2xl border px-5 py-3 shadow-sm ${t.inputContainer}`}
+                          style={{ marginLeft: '-37px' }}
+                        >
                           <div className={`assistant-markdown space-y-3 text-sm leading-7 ${t.assistantText}`}>
                             {renderAssistantMessage(message.text)}
                           </div>
-                          <StudyFlowGraph topics={suggestedTopics} />
+                          <StudyFlowGraph topics={suggestedTopics} flowStyle={flowStyle} />
                           <ResponseSummary takeaways={summary?.takeaways} conclusion={summary?.conclusion} />
                           {suggestedTopics.length ? (
                             <div className="mt-4 flex flex-wrap gap-2">

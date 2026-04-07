@@ -1,6 +1,5 @@
 import base64
 import copy
-import http.client
 import io
 import json
 import os
@@ -49,7 +48,11 @@ COMMUNITY_BLOCKED_WORDS = [
 PROVIDER_KEYS = {
 	'openai': os.getenv('OPENAI_API_KEY'),
 	'anthropic': os.getenv('ANTHROPIC_API_KEY'),
-	'google': os.getenv('GOOGLE_GENERATIVE_AI_API_KEY') or os.getenv('GOOGLE_API_KEY'),
+	'google': (
+		os.getenv('GOOGLE_GENERATIVE_AI_API_KEY')
+		or os.getenv('GOOGLE_API_KEY')
+		or os.getenv('gemini_api_key')
+	),
 	'huggingface': os.getenv('HUGGINGFACE_API_KEY'),
 	'groq': os.getenv('GROQ_API_KEY') or os.getenv('groq_api_key'),
 	'deepseek': os.getenv('DEEPSEEK_API_KEY'),
@@ -57,7 +60,7 @@ PROVIDER_KEYS = {
 
 VISION_PROVIDERS = {'openai', 'google', 'anthropic'}
 WHISPER_MODEL = os.getenv('WHISPER_MODEL', 'distil-whisper/distil-small.en')
-GROQ_WHISPER_MODEL = os.getenv('GROQ_WHISPER_MODEL', 'whisper-large-v3-turbo')
+GROQ_WHISPER_MODEL = os.getenv('GROQ_WHISPER_MODEL', 'whisper-large-v3')
 MAX_HISTORY_MESSAGES = int(os.getenv('MAX_CHAT_HISTORY_MESSAGES', '12'))
 MAX_STORED_MESSAGES_PER_CONVERSATION = int(os.getenv('MAX_STORED_MESSAGES_PER_CONVERSATION', '200'))
 MAX_IN_MEMORY_CONVERSATIONS = int(os.getenv('MAX_IN_MEMORY_CONVERSATIONS', '500'))
@@ -89,13 +92,21 @@ _GOOGLE_KEY_ROTATION_INDEX = 0
 
 def _load_google_api_keys():
 	keys = []
-	for env_name in ['GOOGLE_GENERATIVE_AI_API_KEY', 'GOOGLE_API_KEY']:
+	for env_name in [
+		'GOOGLE_GENERATIVE_AI_API_KEY',
+		'GOOGLE_API_KEY',
+		'gemini_api_key',
+	]:
 		value = (os.getenv(env_name) or '').strip()
 		if value:
 			keys.append(value)
 
 	for i in range(1, 11):
-		for env_name in [f'GOOGLE_GENERATIVE_AI_API_KEY{i}', f'GOOGLE_API_KEY{i}']:
+		for env_name in [
+			f'GOOGLE_GENERATIVE_AI_API_KEY{i}',
+			f'GOOGLE_API_KEY{i}',
+			f'gemini_api_key{i}',
+		]:
 			value = (os.getenv(env_name) or '').strip()
 			if value:
 				keys.append(value)
@@ -351,29 +362,6 @@ def _transcribe_audio(audio, api_key):
 	return None
 
 
-def _build_multipart_form(fields, files, boundary):
-	parts = []
-	for name, value in fields.items():
-		parts.append(f'--{boundary}'.encode('utf-8'))
-		parts.append(f'Content-Disposition: form-data; name="{name}"'.encode('utf-8'))
-		parts.append(b'')
-		parts.append(str(value).encode('utf-8'))
-	for name, file_info in files.items():
-		filename = file_info.get('filename') or 'audio'
-		content_type = file_info.get('content_type') or 'application/octet-stream'
-		data = file_info.get('data') or b''
-		parts.append(f'--{boundary}'.encode('utf-8'))
-		parts.append(
-			f'Content-Disposition: form-data; name="{name}"; filename="{filename}"'.encode('utf-8')
-		)
-		parts.append(f'Content-Type: {content_type}'.encode('utf-8'))
-		parts.append(b'')
-		parts.append(data)
-	parts.append(f'--{boundary}--'.encode('utf-8'))
-	parts.append(b'')
-	return b'\r\n'.join(parts)
-
-
 def _transcribe_audio_groq(audio, api_key):
 	data_url = (audio or {}).get('dataUrl')
 	if not data_url:
@@ -381,60 +369,37 @@ def _transcribe_audio_groq(audio, api_key):
 	data, mime = _decode_data_url(data_url)
 	if not data:
 		raise ValueError('Invalid audio payload.')
-	boundary = f'----taBoundary{uuid.uuid4().hex}'
-	suffix = '.webm' if (mime or '').endswith('webm') else '.wav'
-	payload = _build_multipart_form(
-		{
-			'model': GROQ_WHISPER_MODEL,
-		},
-		{
-			'file': {
-				'filename': f'audio{suffix}',
-				'content_type': mime or 'application/octet-stream',
-				'data': data,
-			},
-		},
-		boundary,
-	)
-	headers = {
-		'Authorization': f'Bearer {api_key}',
-		'Content-Type': f'multipart/form-data; boundary={boundary}',
-	}
-	request = urllib.request.Request(
-		'https://api.groq.com/openai/v1/audio/transcriptions',
-		data=payload,
-		headers=headers,
-		method='POST',
-	)
 	try:
-		with urllib.request.urlopen(request, timeout=60) as resp:
-			try:
-				body = resp.read()
-			except http.client.IncompleteRead as exc:
-				body = exc.partial or b''
-			try:
-				payload = json.loads(body.decode('utf-8'))
-			except json.JSONDecodeError:
-				raise ValueError('Audio transcription failed. Invalid Groq response.')
-	except urllib.error.HTTPError as exc:
-		body = exc.read()
-		try:
-			payload = json.loads(body.decode('utf-8'))
-		except json.JSONDecodeError:
-			raise ValueError('Audio transcription failed. Check the Groq API key and model access.')
-		if isinstance(payload, dict) and payload.get('error'):
-			error_message = payload.get('error')
-			if isinstance(error_message, dict):
-				error_message = error_message.get('message') or error_message.get('type')
-			raise ValueError(str(error_message))
-		raise ValueError('Audio transcription failed.')
-	except urllib.error.URLError as exc:
-		raise ValueError(str(exc))
-	if isinstance(payload, dict) and payload.get('error'):
-		raise ValueError(str(payload.get('error')))
-	if isinstance(payload, dict):
-		return str(payload.get('text') or '').strip() or None
-	return None
+		from openai import OpenAI
+	except Exception as exc:
+		raise ValueError('Groq transcription requires the openai package. Install it in backend requirements.') from exc
+
+	suffix = '.webm' if (mime or '').endswith('webm') else '.wav'
+	audio_file = io.BytesIO(data)
+	audio_file.name = f'audio{suffix}'
+
+	try:
+		client = OpenAI(
+			api_key=api_key,
+			base_url='https://api.groq.com/openai/v1',
+		)
+		response = client.audio.transcriptions.create(
+			model=GROQ_WHISPER_MODEL,
+			file=audio_file,
+		)
+	except Exception as exc:
+		raise ValueError(f'Groq transcription failed: {exc}') from exc
+
+	text = ''
+	if hasattr(response, 'text'):
+		text = str(getattr(response, 'text') or '').strip()
+	elif isinstance(response, dict):
+		text = str(response.get('text') or '').strip()
+
+	if not text:
+		raise ValueError('Groq transcription returned an empty response.')
+
+	return text
 
 
 def _transcribe_audio_local(audio):
@@ -890,8 +855,12 @@ def chat(request):
 			documents = []
 		if len(language) > 40:
 			return JsonResponse({'error': 'Language value is too long.'}, status=400)
+		if not language:
+			language = 'English'
 		if not isinstance(save_history, bool):
 			save_history = True
+
+		transcript = ''
 
 		if not message and not images and not audio and not documents:
 			return JsonResponse({'error': 'Message, image, audio, or document is required.'}, status=400)
@@ -907,28 +876,13 @@ def chat(request):
 			return JsonResponse({'error': 'Selected model does not support images.'}, status=400)
 
 		if audio:
-			groq_key = PROVIDER_KEYS.get('groq')
-			hf_key = PROVIDER_KEYS.get('huggingface')
-			transcript = None
-			remote_error = None
-			if groq_key:
-				try:
-					transcript = _transcribe_audio_groq(audio, groq_key)
-				except ValueError as exc:
-					remote_error = str(exc)
-			if not transcript and hf_key:
-				try:
-					transcript = _transcribe_audio(audio, hf_key)
-				except ValueError as exc:
-					remote_error = str(exc)
-			if not transcript:
-				try:
-					transcript = _transcribe_audio_local(audio)
-				except ValueError as exc:
-					local_error = str(exc)
-					if remote_error:
-						return JsonResponse({'error': f'{remote_error} {local_error}'}, status=400)
-					return JsonResponse({'error': local_error}, status=400)
+			groq_api_key = (PROVIDER_KEYS.get('groq') or '').strip()
+			if not groq_api_key:
+				return JsonResponse({'error': 'Missing GROQ_API_KEY (or groq_api_key) in backend .env.'}, status=500)
+			try:
+				transcript = _transcribe_audio_groq(audio, groq_api_key)
+			except ValueError as exc:
+				return JsonResponse({'error': str(exc)}, status=400)
 			if transcript:
 				# If audio is present, use Whisper transcript as the sole text input.
 				message = transcript.strip()
@@ -960,11 +914,43 @@ def chat(request):
 		content = _build_content(message, images) if images else message
 		messages = []
 		system_prompt = (
-			'You are an expert teacher. Explain concepts briefly and in an easy-to-understand way. '
-			'Use clear language and include simple examples when helpful.'
+			  "You are an expert teacher and teaching assistant.\n"
+
+    "Your goal is to explain concepts clearly in a structured way.\n"
+
+    "Explanation order (VERY IMPORTANT):\n"
+    "1. First, explain the mathematical intuition.\n"
+    "   - Include ALL key mathematical ideas (not just final formulas).\n"
+    "   - Explain concepts like error, cost function, optimization, and how the model learns.\n"
+    "2. Then, explain using real-world examples and scenarios.\n"
+
+    "Guidelines:\n"
+    "- Do not stop with a single formula.\n"
+    "- Always explain the full process behind the concept.\n"
+    "- Use simple language for math intuition (no heavy derivations).\n"
+
+		    "For different types of questions:\n"
+    "- Concept questions: Intuition (with full math ideas) → Example.\n"
+    "- Math problems: Step-by-step solution.\n"
+    "- Coding questions: Provide only code unless asked.\n"
+		    "- Yes/No questions: Respond with only an affirmative or negative word in the selected response language.\n"
+
+    "Context handling:\n"
+    "- Use only provided documents if given.\n"
+    "- Analyze images if provided.\n"
+
+    "Honesty rule:\n"
+    "- If unsure, say 'I don't know.'\n"
+
+    "Style:\n"
+    "- Use headings: 'Intuition' and 'Example'.\n"
+    "- Keep it simple but complete.\n"
 		)
-		if language:
-			system_prompt = f'{system_prompt} Respond in {language}.'
+		system_prompt = (
+			f"{system_prompt}\n"
+			f"Language rule (highest priority): Reply only in {language}. "
+			"Do not switch to English unless the selected language is English."
+		)
 		messages.append({'role': 'system', 'content': system_prompt})
 
 		history = _get_in_memory_history(conversation_key)[-MAX_HISTORY_MESSAGES:]
@@ -974,12 +960,21 @@ def chat(request):
 			if past_text and past_role in {'user', 'assistant'}:
 				messages.append({'role': past_role, 'content': past_text})
 
+		messages.append(
+			{
+				'role': 'system',
+				'content': f'Final reminder: answer only in {language}.',
+			}
+		)
+
 		messages.append({'role': 'user', 'content': content})
 
 		request_kwargs = {
 			'model': config['model'],
 			'messages': messages,
 		}
+		response_model = config['model']
+		fallback_notice = ''
 
 		if config['provider'] == 'google':
 			google_keys = config.get('api_keys') or []
@@ -1005,13 +1000,46 @@ def chat(request):
 			else:
 				reply = str(reply_content or '').strip()
 		except RateLimitError as exc:
-			return JsonResponse(
-				{
-					'error': 'Rate limit exceeded for the selected model.',
-					'details': str(exc),
-				},
-				status=429,
-			)
+			if config['provider'] == 'google' and config['model'] != 'gemini/gemini-2.5-flash':
+				fallback_request_kwargs = {
+					**request_kwargs,
+					'model': 'gemini/gemini-2.5-flash',
+				}
+				try:
+					response = _complete_with_google_fallback(fallback_request_kwargs, google_keys)
+					reply_content = response['choices'][0]['message']['content']
+					if isinstance(reply_content, list):
+						reply = ''.join(
+							part.get('text', '') if isinstance(part, dict) else str(part)
+							for part in reply_content
+						).strip()
+					else:
+						reply = str(reply_content or '').strip()
+					response_model = 'gemini/gemini-2.5-flash'
+					fallback_notice = 'Selected Gemini model hit quota; used gemini-2.5-flash instead.'
+				except RateLimitError:
+					pass
+				except Exception:
+					pass
+				if fallback_notice:
+					# Fallback succeeded; skip returning 429.
+					pass
+				else:
+					return JsonResponse(
+						{
+							'error': 'Rate limit exceeded for the selected model.',
+							'details': str(exc),
+						},
+						status=429,
+					)
+			else:
+				return JsonResponse(
+					{
+						'error': 'Rate limit exceeded for the selected model.',
+						'details': str(exc),
+					},
+					status=429,
+				)
 		except Exception as exc:
 			return JsonResponse({'error': str(exc)}, status=500)
 
@@ -1023,7 +1051,15 @@ def chat(request):
 				_append_in_memory_message(conversation_key, 'user', stored_user_text)
 			_append_in_memory_message(conversation_key, 'assistant', reply)
 
-		return JsonResponse({'reply': reply, 'conversation_id': conversation_key})
+		return JsonResponse(
+			{
+				'reply': reply,
+				'conversation_id': conversation_key,
+				'transcript': transcript,
+				'model_used': response_model,
+				'notice': fallback_notice,
+			}
+		)
 	except Exception as exc:
 		# Keep unexpected server failures JSON-formatted so the frontend can show a useful message.
 		return JsonResponse({'error': 'Unexpected server error.', 'details': str(exc)}, status=500)
