@@ -46,7 +46,7 @@ COMMUNITY_BLOCKED_WORDS = [
 ]
 
 PROVIDER_KEYS = {
-	'openai': os.getenv('OPENAI_API_KEY'),
+	'openai': os.environ.get('OPENAI_API_KEY'),
 	'anthropic': os.getenv('ANTHROPIC_API_KEY'),
 	'google': (
 		os.getenv('GOOGLE_GENERATIVE_AI_API_KEY')
