@@ -1,0 +1,2 @@
+web: gunicorn backend.wsgipip install gunicorn
+pip freeze > requirements.txt
