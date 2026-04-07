@@ -47,17 +47,33 @@ COMMUNITY_BLOCKED_WORDS = [
 
 def _get_provider_keys():
 	return {
-		'openai': os.environ.get('OPENAI_API_KEY'),
-		'anthropic': os.getenv('ANTHROPIC_API_KEY'),
+		'openai': os.environ.get('OPENAI_API_KEY') or os.getenv('openai_api_key'),
+		'anthropic': os.getenv('ANTHROPIC_API_KEY') or os.getenv('anthropic_api_key'),
 		'google': (
 			os.getenv('GOOGLE_GENERATIVE_AI_API_KEY')
 			or os.getenv('GOOGLE_API_KEY')
 			or os.getenv('gemini_api_key')
 		),
-		'huggingface': os.getenv('HUGGINGFACE_API_KEY'),
+		'huggingface': (
+			os.getenv('HUGGINGFACE_API_KEY')
+			or os.getenv('HF_TOKEN')
+			or os.getenv('huggingface_api_key')
+		),
 		'groq': os.getenv('GROQ_API_KEY') or os.getenv('groq_api_key'),
-		'deepseek': os.getenv('DEEPSEEK_API_KEY'),
+		'deepseek': os.getenv('DEEPSEEK_API_KEY') or os.getenv('deepseek_api_key'),
 	}
+
+
+def _provider_env_hint(provider):
+	hints = {
+		'openai': 'Set OPENAI_API_KEY (or openai_api_key) in Render environment variables.',
+		'anthropic': 'Set ANTHROPIC_API_KEY (or anthropic_api_key) in Render environment variables.',
+		'google': 'Set GOOGLE_GENERATIVE_AI_API_KEY (or GOOGLE_API_KEY / gemini_api_key) in Render environment variables.',
+		'huggingface': 'Set HUGGINGFACE_API_KEY (or HF_TOKEN / huggingface_api_key) in Render environment variables.',
+		'groq': 'Set GROQ_API_KEY (or groq_api_key) in Render environment variables.',
+		'deepseek': 'Set DEEPSEEK_API_KEY (or deepseek_api_key) in Render environment variables.',
+	}
+	return hints.get(provider, 'Set the required provider API key in Render environment variables.')
 
 VISION_PROVIDERS = {'openai', 'google', 'anthropic'}
 WHISPER_MODEL = os.getenv('WHISPER_MODEL', 'distil-whisper/distil-small.en')
@@ -885,7 +901,13 @@ def chat(request):
 		if not config:
 			return JsonResponse({'error': 'Unknown model.'}, status=400)
 		if not config['api_key']:
-			return JsonResponse({'error': 'Missing API key for selected provider.'}, status=500)
+			return JsonResponse(
+				{
+					'error': 'Missing API key for selected provider.',
+					'details': _provider_env_hint(config['provider']),
+				},
+				status=500,
+			)
 		if images and config['provider'] not in VISION_PROVIDERS:
 			return JsonResponse({'error': 'Selected model does not support images.'}, status=400)
 
@@ -1187,7 +1209,13 @@ def community_messages_delete(request):
 def google_auth_config(request):
 	oauth = _get_google_oauth_config()
 	if not oauth['client_id']:
-		return JsonResponse({'error': 'Google OAuth client ID is not configured on the server.'}, status=500)
+		return JsonResponse(
+			{
+				'error': 'Google OAuth client ID is not configured on the server.',
+				'details': 'Set GOOGLE_OAUTH_CLIENT_ID (or GOOGLE_CLIENT_ID / CLIENT_ID) in Render environment variables.',
+			},
+			status=500,
+		)
 	return JsonResponse(
 		{
 			'clientId': oauth['client_id'],
@@ -1201,7 +1229,13 @@ def google_auth_config(request):
 def google_auth(request):
 	oauth = _get_google_oauth_config()
 	if not oauth['client_id'] or not oauth['client_secret']:
-		return JsonResponse({'error': 'Google OAuth credentials are missing on the server.'}, status=500)
+		return JsonResponse(
+			{
+				'error': 'Google OAuth credentials are missing on the server.',
+				'details': 'Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET in Render environment variables.',
+			},
+			status=500,
+		)
 
 	try:
 		payload = json.loads(request.body or '{}')
@@ -1284,7 +1318,13 @@ def google_auth(request):
 def google_auth_token(request):
 	oauth = _get_google_oauth_config()
 	if not oauth['client_id']:
-		return JsonResponse({'error': 'Google OAuth client ID is not configured on the server.'}, status=500)
+		return JsonResponse(
+			{
+				'error': 'Google OAuth client ID is not configured on the server.',
+				'details': 'Set GOOGLE_OAUTH_CLIENT_ID (or GOOGLE_CLIENT_ID / CLIENT_ID) in Render environment variables.',
+			},
+			status=500,
+		)
 
 	try:
 		payload = json.loads(request.body or '{}')
@@ -1384,7 +1424,13 @@ def generate_mcq_test(request):
 		if not config:
 			return JsonResponse({'error': 'Unknown model for test generation.'}, status=400)
 		if not config.get('api_key'):
-			return JsonResponse({'error': 'Missing API key for selected provider.'}, status=500)
+			return JsonResponse(
+				{
+					'error': 'Missing API key for selected provider.',
+					'details': _provider_env_hint(config['provider']),
+				},
+				status=500,
+			)
 
 		system_prompt = (
 			'You are an expert exam question setter. Generate highly topic-specific multiple-choice questions. '
@@ -1484,7 +1530,13 @@ def generate_coding_test(request):
 		if not config:
 			return JsonResponse({'error': 'Unknown model for coding test generation.'}, status=400)
 		if not config.get('api_key'):
-			return JsonResponse({'error': 'Missing API key for selected provider.'}, status=500)
+			return JsonResponse(
+				{
+					'error': 'Missing API key for selected provider.',
+					'details': _provider_env_hint(config['provider']),
+				},
+				status=500,
+			)
 
 		system_prompt = (
 			'You create coding interview style problems with executable test cases. '
