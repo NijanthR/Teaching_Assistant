@@ -37,7 +37,7 @@ SECRET_KEY = os.environ['SECRET_KEY']
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_bool('DEBUG', False)
 
-raw_hosts = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1')
+raw_hosts = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1,.hf.space')
 ALLOWED_HOSTS = [h.strip() for h in raw_hosts.split(',') if h.strip()]
 
 
@@ -144,10 +144,10 @@ cors_origins = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:5173')
 CORS_ALLOW_ALL_ORIGINS = env_bool('CORS_ALLOW_ALL_ORIGINS', True)
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_origins.split(',') if origin.strip()]
 
-csrf_trusted = os.getenv('CSRF_TRUSTED_ORIGINS', '')
+csrf_trusted = os.getenv('CSRF_TRUSTED_ORIGINS', 'https://*.hf.space')
 CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in csrf_trusted.split(',') if origin.strip()]
 
-# Render runs Django behind a proxy; trust forwarded proto for secure redirects/cookies.
+# Managed hosting platforms (Render/Hugging Face) run Django behind a proxy.
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_SSL_REDIRECT = env_bool('SECURE_SSL_REDIRECT', True)
 SESSION_COOKIE_SECURE = env_bool('SESSION_COOKIE_SECURE', True)
